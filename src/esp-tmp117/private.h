@@ -1,5 +1,5 @@
-#ifndef __LIB__RFM69HCW_PRIVATE_H
-#define __LIB__RFM69HCW_PRIVATE_H
+#ifndef __LIB__TMP117_PRIVATE_H
+#define __LIB__TMP117_PRIVATE_H
 
 #include <driver/gpio.h>
 #include <driver/i2c.h>
