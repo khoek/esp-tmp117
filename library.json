@@ -17,5 +17,8 @@
     "license": "MIT",
     "homepage": "https://github.com/khoek/esp-tmp117",
     "frameworks": "espidf",
-    "platforms": "espressif32"
+    "platforms": "espressif32",
+    "dependencies": {
+        "khoek/libi2c": "~1.0.0"
+    }
 }

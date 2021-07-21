@@ -1,22 +1,41 @@
 #include <driver/i2c.h>
 #include <esp_log.h>
 
-#include "private.h"
+#include "tmp117.h"
+
+static const char* TAG = "tmp117";
+
+static esp_err_t regw_read(tmp117_handle_t dev, tmp117_reg_t reg, uint16_t* out_val) {
+    uint8_t data[2];
+
+    esp_err_t ret = i2c_7bit_reg_read(dev, reg, 2, data);
+    *out_val = (((uint16_t) data[0]) << 8) | (((uint16_t) data[1]) << 0);
+    return ret;
+}
+
+static esp_err_t regw_write(tmp117_handle_t dev, tmp117_reg_t reg, uint16_t val) {
+    uint8_t data[2];
+    data[0] = (val & 0xFF00) >> 8;
+    data[1] = (val & 0x00FF) >> 0;
+
+    return i2c_7bit_reg_write(dev, reg, 2, data);
+}
 
 esp_err_t tmp117_init(i2c_port_t port, uint8_t addr, tmp117_handle_t* out_dev) {
-    assert(!(addr & 0x80));
-
-    tmp117_handle_t dev = malloc(sizeof(tmp117_t));
-    dev->addr = addr;
-    dev->port = port;
+    tmp117_handle_t dev;
+    i2c_7bit_init(port, addr, &dev);
 
     // As per spec, there is a power-on reset (POR) which occurs on startup.
-    // Nneed to wait until EEPROM_BUSY goes low---this takes approx 1.5ms.
-    while (tmp117_reg_read(dev, TMP117_REG_CONFIGURATION) & TMP117_CONFIGURATION_EEPROM_BUSY) {
+    // Need to wait until EEPROM_BUSY goes low---this takes approx 1.5ms.
+    uint16_t reg_cfg;
+    do {
         vTaskDelay(1);
-    }
 
-    tmp117_reset(dev);
+        if (regw_read(dev, TMP117_REG_CONFIGURATION, &reg_cfg) != ESP_OK) {
+            ESP_LOGE(TAG, "I2C read failed, are I2C pin numbers/address correct?");
+            goto tmp117_init_fail;
+        }
+    } while (reg_cfg & TMP117_CONFIGURATION_EEPROM_BUSY);
 
     uint16_t ver = tmp117_reg_read(dev, TMP117_REG_DEVICE_ID);
     switch (ver) {
@@ -25,22 +44,24 @@ esp_err_t tmp117_init(i2c_port_t port, uint8_t addr, tmp117_handle_t* out_dev) {
             break;
         }
         default: {
-            ESP_LOGE(TAG, "unknown device id (0x%04X), are pin numbers correct?", ver);
-            free(dev);
-            return ESP_FAIL;
+            ESP_LOGE(TAG, "unknown device id (0x%02X), have you specified the address of another device?", ver);
+            goto tmp117_init_fail;
         }
     }
 
+    tmp117_reset(dev);
+
     *out_dev = dev;
     return ESP_OK;
+
+tmp117_init_fail:
+    i2c_7bit_destroy(dev);
+    return ESP_FAIL;
 }
 
 void tmp117_destroy(tmp117_handle_t dev) {
-    free(dev);
+    i2c_7bit_destroy(dev);
 }
-
-#define ADDR_GENERAL_CALL_RESET 0x00
-#define CMD_GENERAL_CALL_RESET 0x06
 
 void tmp117_reset(tmp117_handle_t dev) {
     ESP_LOGD(TAG, "resetting");
@@ -48,15 +69,9 @@ void tmp117_reset(tmp117_handle_t dev) {
     // Note that there is also a software reset method via the configuration
     // register, instead of via a general call.
 
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, ADDR_GENERAL_CALL_RESET | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, CMD_GENERAL_CALL_RESET, true);
-    i2c_master_stop(cmd);
-
-    ESP_ERROR_CHECK(i2c_master_cmd_begin(dev->port, cmd, 1000 / portTICK_RATE_MS));
-    i2c_cmd_link_delete(cmd);
+    tmp117_reg_write(dev, TMP117_REG_CONFIGURATION, TMP117_CONFIGURATION_SOFT_RESET);
+    // As per spec, reset will begin after at most 2ms.
+    vTaskDelay(1 + (2 / portTICK_PERIOD_MS));
 
     // As per spec, need to wait until EEPROM_BUSY goes low after a reset.
     // This takes approx 1.5ms.
@@ -66,41 +81,15 @@ void tmp117_reset(tmp117_handle_t dev) {
 }
 
 uint16_t tmp117_reg_read(tmp117_handle_t dev, tmp117_reg_t reg) {
-    uint8_t data[2];
+    uint16_t val;
+    ESP_ERROR_CHECK(regw_read(dev, reg, &val));
 
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (((uint8_t) dev->addr) << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, ((uint8_t) reg), true);
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (((uint8_t) dev->addr) << 1) | I2C_MASTER_READ, true);
-    i2c_master_read(cmd, data, 2, I2C_MASTER_LAST_NACK);
-    i2c_master_stop(cmd);
-
-    ESP_ERROR_CHECK(i2c_master_cmd_begin(dev->port, cmd, 1000 / portTICK_RATE_MS));
-    i2c_cmd_link_delete(cmd);
-
-    uint16_t val = (((uint16_t) data[0]) << 8) | (((uint16_t) data[1]) << 0);
     ESP_LOGD(TAG, "reg_read(0x%02X)=0x%04X", reg, val);
     return val;
 }
 
 void tmp117_reg_write(tmp117_handle_t dev, tmp117_reg_t reg, uint16_t val) {
-    uint8_t data[2];
-    data[0] = (val & 0xFF00) >> 8;
-    data[1] = (val & 0x00FF) >> 0;
-
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (((uint8_t) dev->addr) << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, ((uint8_t) reg), true);
-    i2c_master_write(cmd, data, 2, true);
-    i2c_master_stop(cmd);
-
-    ESP_ERROR_CHECK(i2c_master_cmd_begin(dev->port, cmd, 1000 / portTICK_RATE_MS));
-    i2c_cmd_link_delete(cmd);
+    ESP_ERROR_CHECK(regw_write(dev, reg, val));
 
     ESP_LOGD(TAG, "reg_write(0x%02X)=0x%04X", reg, val);
 }

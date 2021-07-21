@@ -2,6 +2,7 @@
 #define __LIB_TMP117_H
 
 #include <driver/i2c.h>
+#include <libi2c.h>
 
 // The device id of the TMP117 supported by this driver.
 #define TMP117_DEVICE_ID_DRIVER_SUPPORTED 0x0117
@@ -32,10 +33,11 @@ typedef enum tmp117_reg {
 #define TMP117_CONFIGURATION_AVG_32 (0b10ULL << 5)
 #define TMP117_CONFIGURATION_AVG_64 (0b11ULL << 5)
 
+#define TMP117_CONFIGURATION_SOFT_RESET (1ULL << 1)
+
 #define TMP117_EEPROM_UL_EUN (1ULL << 15)
 
-typedef struct tmp117 tmp117_t;
-typedef tmp117_t* tmp117_handle_t;
+typedef i2c_7bit_handle_t tmp117_handle_t;
 
 // Register the TMP117 on the given I2C bus.
 esp_err_t tmp117_init(i2c_port_t port, uint8_t addr, tmp117_handle_t* out_dev);
