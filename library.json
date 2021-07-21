@@ -1,6 +1,6 @@
 {
     "name": "esp-tmp117",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "description": "A library built on esp-idf for reading TMP117 temperature sensors.",
     "keywords": "tmp117, temperature, temp, i2c, hardware, esp-idf, esp32, esp8266",
     "repository": {
