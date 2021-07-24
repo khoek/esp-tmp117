@@ -1,7 +1,8 @@
 #include <driver/i2c.h>
 #include <esp_log.h>
+#include <libi2c.h>
 
-#include "tmp117.h"
+#include "device/tmp117.h"
 
 static const char* TAG = "tmp117";
 
@@ -66,8 +67,7 @@ void tmp117_destroy(tmp117_handle_t dev) {
 void tmp117_reset(tmp117_handle_t dev) {
     ESP_LOGD(TAG, "resetting");
 
-    // Note that there is also a software reset method via the configuration
-    // register, instead of via a general call.
+    // Note that there hardware also supports a reset via a general call.
 
     tmp117_reg_write(dev, TMP117_REG_CONFIGURATION, TMP117_CONFIGURATION_SOFT_RESET);
     // As per spec, reset will begin after at most 2ms.
