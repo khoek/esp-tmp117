@@ -9,7 +9,7 @@ static const char* TAG = "tmp117";
 static esp_err_t regw_read(tmp117_handle_t dev, tmp117_reg_t reg, uint16_t* out_val) {
     uint8_t data[2];
 
-    esp_err_t ret = i2c_7bit_reg_read(dev, reg, 2, data);
+    esp_err_t ret = i2c_7bit_reg8b_read(dev, reg, data, 2);
     *out_val = (((uint16_t) data[0]) << 8) | (((uint16_t) data[1]) << 0);
     return ret;
 }
@@ -19,7 +19,7 @@ static esp_err_t regw_write(tmp117_handle_t dev, tmp117_reg_t reg, uint16_t val)
     data[0] = (val & 0xFF00) >> 8;
     data[1] = (val & 0x00FF) >> 0;
 
-    return i2c_7bit_reg_write(dev, reg, 2, data);
+    return i2c_7bit_reg8b_write(dev, reg, data, 2);
 }
 
 esp_err_t tmp117_init(i2c_port_t port, uint8_t addr, tmp117_handle_t* out_dev) {
