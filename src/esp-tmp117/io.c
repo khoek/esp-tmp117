@@ -1,28 +1,16 @@
 #include <driver/i2c.h>
 #include <esp_log.h>
+#include <libesp.h>
+#include <libesp/marshall.h>
 #include <libi2c.h>
 
 #include "device/tmp117.h"
 
 static const char* TAG = "tmp117";
 
-static esp_err_t regw_read(tmp117_handle_t dev, tmp117_reg_t reg, uint16_t* out_val) {
-    uint8_t data[2];
-
-    esp_err_t ret = i2c_7bit_reg8b_read(dev, reg, data, 2);
-    *out_val = (((uint16_t) data[0]) << 8) | (((uint16_t) data[1]) << 0);
-    return ret;
-}
-
-static esp_err_t regw_write(tmp117_handle_t dev, tmp117_reg_t reg, uint16_t val) {
-    uint8_t data[2];
-    data[0] = (val & 0xFF00) >> 8;
-    data[1] = (val & 0x00FF) >> 0;
-
-    return i2c_7bit_reg8b_write(dev, reg, data, 2);
-}
-
 esp_err_t tmp117_init(i2c_port_t port, uint8_t addr, tmp117_handle_t* out_dev) {
+    esp_err_t ret;
+
     tmp117_handle_t dev;
     i2c_7bit_init(port, addr, &dev);
 
@@ -32,64 +20,118 @@ esp_err_t tmp117_init(i2c_port_t port, uint8_t addr, tmp117_handle_t* out_dev) {
     do {
         vTaskDelay(1);
 
-        if (regw_read(dev, TMP117_REG_CONFIGURATION, &reg_cfg) != ESP_OK) {
-            ESP_LOGE(TAG, "I2C read failed, are I2C pin numbers/address correct?");
+        ret = tmp117_reg_read(dev, TMP117_REG_CONFIGURATION, &reg_cfg);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG,
+                     "I2C read failed, are I2C pin numbers/address correct?");
             goto tmp117_init_fail;
         }
     } while (reg_cfg & TMP117_CONFIGURATION_EEPROM_BUSY);
 
-    uint16_t ver = tmp117_reg_read(dev, TMP117_REG_DEVICE_ID);
+    uint16_t ver;
+    ret = tmp117_reg_read(dev, TMP117_REG_DEVICE_ID, &ver);
+    if (ret != ESP_OK) {
+        goto tmp117_init_fail;
+    }
+
     switch (ver) {
         case TMP117_DEVICE_ID_DRIVER_SUPPORTED: {
             // Current version supported by the driver.
             break;
         }
         default: {
-            ESP_LOGE(TAG, "unknown device id (0x%02X), have you specified the address of another device?", ver);
+            ret = ESP_FAIL;
+
+            ESP_LOGE(TAG,
+                     "unknown device id (0x%02X), have you specified the "
+                     "address of another device?",
+                     ver);
             goto tmp117_init_fail;
         }
     }
 
-    tmp117_reset(dev);
+    ret = tmp117_reset(dev);
+    if (ret != ESP_OK) {
+        goto tmp117_init_fail;
+    }
 
     *out_dev = dev;
     return ESP_OK;
 
 tmp117_init_fail:
-    i2c_7bit_destroy(dev);
-    return ESP_FAIL;
+    tmp117_destroy(dev);
+    return ret;
 }
 
 void tmp117_destroy(tmp117_handle_t dev) {
+    ESP_ERROR_DISCARD(tmp117_reg_write(dev, TMP117_REG_CONFIGURATION,
+                                       TMP117_CONFIGURATION_SOFT_RESET));
     i2c_7bit_destroy(dev);
 }
 
-void tmp117_reset(tmp117_handle_t dev) {
+esp_err_t tmp117_reset(tmp117_handle_t dev) {
+    esp_err_t ret;
+
     ESP_LOGD(TAG, "resetting");
 
-    // Note that there hardware also supports a reset via a general call.
+    // Note that the hardware also supports a reset via a general call.
 
-    tmp117_reg_write(dev, TMP117_REG_CONFIGURATION, TMP117_CONFIGURATION_SOFT_RESET);
+    ret = tmp117_reg_write(dev, TMP117_REG_CONFIGURATION,
+                           TMP117_CONFIGURATION_SOFT_RESET);
+    if (ret != ESP_OK) {
+        return ret;
+    }
+
     // As per spec, reset will begin after at most 2ms.
     vTaskDelay(1 + (2 / portTICK_PERIOD_MS));
 
     // As per spec, need to wait until EEPROM_BUSY goes low after a reset.
     // This takes approx 1.5ms.
-    while (tmp117_reg_read(dev, TMP117_REG_CONFIGURATION) & TMP117_CONFIGURATION_EEPROM_BUSY) {
+    uint16_t cfg;
+    while (1) {
+        ret = tmp117_reg_read(dev, TMP117_REG_CONFIGURATION, &cfg);
+        if (ret != ESP_OK) {
+            return ret;
+        }
+
+        if (!(cfg & TMP117_CONFIGURATION_EEPROM_BUSY)) {
+            break;
+        }
+
         vTaskDelay(1);
     }
+
+    return ESP_OK;
 }
 
-uint16_t tmp117_reg_read(tmp117_handle_t dev, tmp117_reg_t reg) {
-    uint16_t val;
-    ESP_ERROR_CHECK(regw_read(dev, reg, &val));
+esp_err_t tmp117_reg_read(tmp117_handle_t dev, tmp117_reg_t reg,
+                          uint16_t* val) {
+    uint8_t data[2];
+    esp_err_t ret = i2c_7bit_reg8b_read(dev, reg, data, 2);
 
-    ESP_LOGD(TAG, "reg_read(0x%02X)=0x%04X", reg, val);
-    return val;
+    marshall_2u8_to_1u16_be(val, data);
+
+    if (ret == ESP_OK) {
+        ESP_LOGD(TAG, "reg_read(0x%02X)=0x%04X", reg, *val);
+    } else {
+        ESP_LOGE(TAG, "reg_read(0x%02X)=? <ERR>:0x%X", reg, ret);
+    }
+
+    return ret;
 }
 
-void tmp117_reg_write(tmp117_handle_t dev, tmp117_reg_t reg, uint16_t val) {
-    ESP_ERROR_CHECK(regw_write(dev, reg, val));
+esp_err_t tmp117_reg_write(tmp117_handle_t dev, tmp117_reg_t reg,
+                           uint16_t val) {
+    uint8_t data[2];
+    marshall_1u16_to_2u8_be_args(&data[0], &data[1], val);
 
-    ESP_LOGD(TAG, "reg_write(0x%02X)=0x%04X", reg, val);
+    esp_err_t ret = i2c_7bit_reg8b_write(dev, reg, data, 2);
+
+    if (ret == ESP_OK) {
+        ESP_LOGD(TAG, "reg_write(0x%02X)=0x%04X", reg, val);
+    } else {
+        ESP_LOGE(TAG, "reg_write(0x%02X)=0x%04X <ERR>:0x%X", reg, val, ret);
+    }
+
+    return ret;
 }

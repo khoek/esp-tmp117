@@ -1,8 +1,8 @@
-#ifndef __LIB_TMP117_H
-#define __LIB_TMP117_H
+#pragma once
 
 #include <driver/i2c.h>
 #include <libi2c.h>
+#include <sys/cdefs.h>
 
 // The device id of the TMP117 supported by this driver.
 #define TMP117_DEVICE_ID_DRIVER_SUPPORTED 0x0117
@@ -40,18 +40,19 @@ typedef enum tmp117_reg {
 typedef i2c_7bit_handle_t tmp117_handle_t;
 
 // Register the TMP117 on the given I2C bus.
-esp_err_t tmp117_init(i2c_port_t port, uint8_t addr, tmp117_handle_t* out_dev);
+__result_use_check esp_err_t tmp117_init(i2c_port_t port, uint8_t addr,
+                                         tmp117_handle_t* out_dev);
 
 // Release the given handle.
 void tmp117_destroy(tmp117_handle_t dev);
 
 // Reset the TMP117.
-void tmp117_reset(tmp117_handle_t dev);
+__result_use_check esp_err_t tmp117_reset(tmp117_handle_t dev);
 
 // Read a register over I2C.
-uint16_t tmp117_reg_read(tmp117_handle_t dev, tmp117_reg_t addr);
+__result_use_check esp_err_t tmp117_reg_read(tmp117_handle_t dev,
+                                             tmp117_reg_t addr, uint16_t* val);
 
 // Write a register over I2C.
-void tmp117_reg_write(tmp117_handle_t dev, tmp117_reg_t addr, uint16_t val);
-
-#endif
+__result_use_check esp_err_t tmp117_reg_write(tmp117_handle_t dev,
+                                              tmp117_reg_t addr, uint16_t val);
